@@ -1,0 +1,111 @@
+[project]
+name = "myquant"
+timezone = "America/Toronto"
+python_version = "3.12"
+data_start_date = "2006-01-01"
+
+[data]
+provider = "yfinance"
+storage_format = "parquet"
+price_field = "adj_close"
+
+[targets]
+primary_horizon_days = 5
+benchmark_horizon_days = 1
+label_mode = "ternary_quantile"
+train_quantiles = [0.3333333333, 0.6666666667]
+labels = ["down", "flat", "up"]
+
+[events]
+vix_thresholds = [0.10, 0.20]
+
+[evaluation]
+metrics = [
+  "log_loss",
+  "balanced_accuracy",
+  "brier_score",
+  "directional_hit_rate",
+]
+event_slices = [
+  "vix_abs_10pct_flag",
+  "vix_abs_20pct_flag",
+]
+
+[universe]
+tickers = [
+  "SPY",
+  "XLB",
+  "XLE",
+  "XLF",
+  "XLI",
+  "XLK",
+  "XLP",
+  "XLU",
+  "XLV",
+  "XLY",
+  "QQQ",
+  "IWM",
+  "DIA",
+  "MDY",
+  "RSP",
+  "SMH",
+  "TLT",
+  "IEF",
+  "SHY",
+  "LQD",
+  "HYG",
+  "GLD",
+  "DBC",
+  "UUP",
+  "^VIX",
+]
+
+[[universe.ratios]]
+name = "QQQ_over_SPY"
+numerator = "QQQ"
+denominator = "SPY"
+
+[[universe.ratios]]
+name = "IWM_over_SPY"
+numerator = "IWM"
+denominator = "SPY"
+
+[[universe.ratios]]
+name = "RSP_over_SPY"
+numerator = "RSP"
+denominator = "SPY"
+
+[[universe.ratios]]
+name = "XLY_over_XLP"
+numerator = "XLY"
+denominator = "XLP"
+
+[[universe.ratios]]
+name = "XLK_over_XLU"
+numerator = "XLK"
+denominator = "XLU"
+
+[[universe.ratios]]
+name = "XLF_over_XLU"
+numerator = "XLF"
+denominator = "XLU"
+
+[[universe.ratios]]
+name = "SMH_over_SPY"
+numerator = "SMH"
+denominator = "SPY"
+
+[[universe.ratios]]
+name = "HYG_over_IEF"
+numerator = "HYG"
+denominator = "IEF"
+
+[[universe.ratios]]
+name = "SPY_over_TLT"
+numerator = "SPY"
+denominator = "TLT"
+
+[[universe.ratios]]
+name = "GLD_over_UUP"
+numerator = "GLD"
+denominator = "UUP"
