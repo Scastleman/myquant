@@ -66,6 +66,12 @@ python -m myquant.data.download
 python -m myquant.data.dataset
 ```
 
+Build the larger grouped multi-target panel dataset using:
+
+```powershell
+python -m myquant.data.panel_dataset
+```
+
 Train the first baseline suite using:
 
 ```powershell
@@ -82,4 +88,10 @@ For a larger CUDA-backed run with mixed precision, worker prefetch, gradient acc
 
 ```powershell
 python -m myquant.training.run_transformer --device cuda --epochs 30 --batch-size 256 --lookback 120 --d-model 256 --num-layers 4 --n-heads 8 --patch-length 10 --patch-stride 5 --num-workers 2 --accumulation-steps 2 --log-every-steps 5
+```
+
+For the grouped panel problem, point training at the panel parquet:
+
+```powershell
+python -m myquant.training.run_transformer --dataset-path data\processed\panel_dataset.parquet --device cuda --epochs 30 --batch-size 512 --lookback 60 --d-model 256 --num-layers 4 --n-heads 8 --patch-length 10 --patch-stride 5 --num-workers 2 --log-every-steps 25
 ```

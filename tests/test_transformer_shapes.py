@@ -62,6 +62,47 @@ class TransformerShapeTests(unittest.TestCase):
         self.assertEqual(tuple(x.shape), (4, 2))
         self.assertEqual(tuple(y.shape), ())
 
+    def test_grouped_sequence_indices_do_not_cross_target_ticker_boundaries(self) -> None:
+        frame = pd.DataFrame(
+            {
+                "date": pd.date_range("2020-01-01", periods=8, freq="D"),
+                "target_ticker": ["AAA"] * 4 + ["BBB"] * 4,
+                "feature_a": np.arange(8, dtype=float),
+                "feature_b": np.arange(8, dtype=float) * 2,
+                "target_label_5d": ["down", "flat", "up", "down", "flat", "up", "down", "flat"],
+                "split": [
+                    "train",
+                    "train",
+                    "validation",
+                    "validation",
+                    "train",
+                    "train",
+                    "validation",
+                    "validation",
+                ],
+            }
+        )
+        labels = sorted(frame["target_label_5d"].unique().tolist())
+        label_to_index, _ = build_label_mapping(labels)
+        feature_columns = get_feature_columns(frame)
+        sequence_indices = build_sequence_indices(
+            frame,
+            lookback=3,
+            allowed_splits=("validation",),
+            group_columns=("target_ticker",),
+        )
+        dataset = RollingWindowDataset(
+            frame=frame,
+            feature_columns=feature_columns,
+            label_to_index=label_to_index,
+            sequence_indices=sequence_indices,
+            lookback=3,
+        )
+
+        self.assertEqual([item.endpoint for item in sequence_indices], [2, 3, 6, 7])
+        x, _ = dataset[2]
+        self.assertTrue(np.array_equal(x.numpy()[:, 0], np.array([4.0, 5.0, 6.0], dtype=np.float32)))
+
 
 if __name__ == "__main__":
     unittest.main()

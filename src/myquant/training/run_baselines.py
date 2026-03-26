@@ -40,18 +40,19 @@ def _prediction_frame(
     predicted_labels: pd.Series,
     probabilities: pd.DataFrame,
 ) -> pd.DataFrame:
-    base = subset.loc[
-        :,
-        [
-            "date",
-            "split",
-            "target_label_5d",
-            "target_ret_5d",
-            "target_ret_1d",
-            "vix_abs_10pct_flag",
-            "vix_abs_20pct_flag",
-        ],
-    ].copy()
+    columns = [
+        "date",
+        "split",
+        "target_label_5d",
+        "target_ret_5d",
+        "target_ret_1d",
+        "vix_abs_10pct_flag",
+        "vix_abs_20pct_flag",
+    ]
+    if "target_ticker" in subset.columns:
+        columns.insert(2, "target_ticker")
+
+    base = subset.loc[:, columns].copy()
     base["predicted_label"] = predicted_labels.values
     return pd.concat([base, probabilities], axis=1)
 
@@ -72,6 +73,32 @@ def _slice_metrics(predictions: pd.DataFrame, event_column: str) -> dict[str, di
     )
     metrics["scores"]["average_signal_strength"] = float(
         (event_subset.get("proba_up", 0.0) - event_subset.get("proba_down", 0.0)).mean()
+    )
+    return metrics
+
+
+def _target_ticker_metrics(
+    predictions: pd.DataFrame,
+    target_ticker: str,
+) -> dict[str, dict[str, float] | int | str]:
+    ticker_subset = predictions.loc[predictions["target_ticker"] == target_ticker]
+    metrics: dict[str, dict[str, float] | int | str] = {
+        "target_ticker": target_ticker,
+        "row_count": int(len(ticker_subset)),
+    }
+    if ticker_subset.empty:
+        return metrics
+
+    probability_columns = [column for column in predictions.columns if column.startswith("proba_")]
+    classes = [column.removeprefix("proba_") for column in probability_columns]
+    metrics["scores"] = evaluate_classifier_predictions(
+        ticker_subset["target_label_5d"],
+        ticker_subset["predicted_label"],
+        ticker_subset.loc[:, probability_columns].to_numpy(),
+        classes=classes,
+    )
+    metrics["scores"]["average_signal_strength"] = float(
+        (ticker_subset.get("proba_up", 0.0) - ticker_subset.get("proba_down", 0.0)).mean()
     )
     return metrics
 
@@ -122,6 +149,10 @@ def train_baselines(dataset: pd.DataFrame, run_dir: Path) -> dict:
                 "vix_abs_10pct_flag": _slice_metrics(predictions, "vix_abs_10pct_flag"),
                 "vix_abs_20pct_flag": _slice_metrics(predictions, "vix_abs_20pct_flag"),
             }
+            if "target_ticker" in predictions.columns:
+                split_metrics["ticker_slices"] = {
+                    "SPY": _target_ticker_metrics(predictions, "SPY"),
+                }
             metrics_by_split[split_name] = split_metrics
 
             predictions.to_parquet(model_dir / f"{split_name}_predictions.parquet", index=False)

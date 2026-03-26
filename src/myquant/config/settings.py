@@ -48,6 +48,12 @@ class EvaluationSection:
 
 
 @dataclass(frozen=True)
+class PanelTrainingSection:
+    target_tickers: tuple[str, ...]
+    evaluation_focus_ticker: str
+
+
+@dataclass(frozen=True)
 class UniverseSection:
     tickers: tuple[str, ...]
     ratios: tuple[RatioSpec, ...]
@@ -60,6 +66,7 @@ class ProjectConfig:
     targets: TargetSection
     events: EventSection
     evaluation: EvaluationSection
+    panel_training: PanelTrainingSection
     universe: UniverseSection
 
 
@@ -70,6 +77,24 @@ def _as_tuple(values: Any) -> tuple[Any, ...]:
 def _build_config(raw_config: dict[str, Any]) -> ProjectConfig:
     universe = raw_config["universe"]
     ratio_specs = tuple(RatioSpec(**item) for item in universe.get("ratios", []))
+    raw_panel_training = raw_config.get("panel_training")
+    default_panel_tickers = tuple(
+        ticker for ticker in universe["tickers"] if not str(ticker).startswith("^")
+    )
+    panel_training = PanelTrainingSection(
+        target_tickers=_as_tuple(
+            (
+                raw_panel_training.get("target_tickers", default_panel_tickers)
+                if raw_panel_training is not None
+                else default_panel_tickers
+            )
+        ),
+        evaluation_focus_ticker=(
+            raw_panel_training.get("evaluation_focus_ticker", "SPY")
+            if raw_panel_training is not None
+            else "SPY"
+        ),
+    )
     return ProjectConfig(
         project=ProjectSection(**raw_config["project"]),
         data=DataSection(**raw_config["data"]),
@@ -87,6 +112,7 @@ def _build_config(raw_config: dict[str, Any]) -> ProjectConfig:
             metrics=_as_tuple(raw_config["evaluation"]["metrics"]),
             event_slices=_as_tuple(raw_config["evaluation"]["event_slices"]),
         ),
+        panel_training=panel_training,
         universe=UniverseSection(
             tickers=_as_tuple(universe["tickers"]),
             ratios=ratio_specs,

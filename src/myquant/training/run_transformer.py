@@ -223,18 +223,19 @@ def _prediction_frame(
     index_to_label: dict[int, str],
 ) -> pd.DataFrame:
     row_positions = [item.endpoint for item in sequence_indices]
-    base = frame.iloc[row_positions].loc[
-        :,
-        [
-            "date",
-            "split",
-            "target_label_5d",
-            "target_ret_5d",
-            "target_ret_1d",
-            "vix_abs_10pct_flag",
-            "vix_abs_20pct_flag",
-        ],
-    ].copy()
+    columns = [
+        "date",
+        "split",
+        "target_label_5d",
+        "target_ret_5d",
+        "target_ret_1d",
+        "vix_abs_10pct_flag",
+        "vix_abs_20pct_flag",
+    ]
+    if "target_ticker" in frame.columns:
+        columns.insert(2, "target_ticker")
+
+    base = frame.iloc[row_positions].loc[:, columns].copy()
     base["predicted_label"] = [index_to_label[int(item)] for item in predicted_labels]
     for class_index, class_label in index_to_label.items():
         base[f"proba_{class_label}"] = probabilities[:, class_index]
@@ -261,6 +262,33 @@ def _slice_metrics(predictions: pd.DataFrame, event_column: str, labels: list[st
     return result
 
 
+def _target_ticker_slice_metrics(
+    predictions: pd.DataFrame,
+    target_ticker: str,
+    labels: list[str],
+) -> dict[str, dict | int | str]:
+    ticker_subset = predictions.loc[predictions["target_ticker"] == target_ticker]
+    result: dict[str, dict | int | str] = {
+        "target_ticker": target_ticker,
+        "row_count": int(len(ticker_subset)),
+    }
+    if ticker_subset.empty:
+        return result
+
+    probability_columns = [f"proba_{label}" for label in labels]
+    scores = evaluate_classifier_predictions(
+        ticker_subset["target_label_5d"],
+        ticker_subset["predicted_label"],
+        ticker_subset.loc[:, probability_columns].to_numpy(),
+        classes=labels,
+    )
+    scores["average_signal_strength"] = float(
+        (ticker_subset["proba_up"] - ticker_subset["proba_down"]).mean()
+    )
+    result["scores"] = scores
+    return result
+
+
 def train_transformer(
     frame: pd.DataFrame,
     run_dir: Path,
@@ -272,16 +300,28 @@ def train_transformer(
     labels = sorted(frame["target_label_5d"].unique().tolist())
     label_to_index, index_to_label = build_label_mapping(labels)
     feature_columns = get_feature_columns(frame)
+    group_columns = ("target_ticker",) if "target_ticker" in frame.columns else None
     means, stds = fit_standardization_stats(frame.loc[frame["split"] == "train"], feature_columns)
     normalized = apply_standardization(frame, feature_columns, means, stds)
 
-    train_indices = build_sequence_indices(normalized, lookback=config.lookback, allowed_splits=("train",))
+    train_indices = build_sequence_indices(
+        normalized,
+        lookback=config.lookback,
+        allowed_splits=("train",),
+        group_columns=group_columns,
+    )
     validation_indices = build_sequence_indices(
         normalized,
         lookback=config.lookback,
         allowed_splits=("validation",),
+        group_columns=group_columns,
     )
-    test_indices = build_sequence_indices(normalized, lookback=config.lookback, allowed_splits=("test",))
+    test_indices = build_sequence_indices(
+        normalized,
+        lookback=config.lookback,
+        allowed_splits=("test",),
+        group_columns=group_columns,
+    )
 
     train_dataset = RollingWindowDataset(normalized, feature_columns, label_to_index, train_indices, config.lookback)
     validation_dataset = RollingWindowDataset(
@@ -454,6 +494,10 @@ def train_transformer(
             "vix_abs_10pct_flag": _slice_metrics(pred_frame, "vix_abs_10pct_flag", labels),
             "vix_abs_20pct_flag": _slice_metrics(pred_frame, "vix_abs_20pct_flag", labels),
         }
+        if "target_ticker" in pred_frame.columns:
+            metrics["ticker_slices"] = {
+                "SPY": _target_ticker_slice_metrics(pred_frame, "SPY", labels),
+            }
         pred_frame.to_parquet(run_dir / f"{split_name}_predictions.parquet", index=False)
         return metrics, pred_frame
 

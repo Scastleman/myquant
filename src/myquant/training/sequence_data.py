@@ -70,14 +70,25 @@ def build_sequence_indices(
     frame: pd.DataFrame,
     lookback: int,
     allowed_splits: tuple[str, ...],
+    group_columns: tuple[str, ...] | None = None,
 ) -> list[SequenceIndex]:
     """Create endpoint indices for rolling windows, preserving historical context."""
     indices: list[SequenceIndex] = []
     splits = frame["split"].tolist()
-    for endpoint in range(lookback - 1, len(frame)):
-        split_name = splits[endpoint]
-        if split_name in allowed_splits:
-            indices.append(SequenceIndex(endpoint=endpoint, split=split_name))
+    if not group_columns:
+        for endpoint in range(lookback - 1, len(frame)):
+            split_name = splits[endpoint]
+            if split_name in allowed_splits:
+                indices.append(SequenceIndex(endpoint=endpoint, split=split_name))
+        return indices
+
+    grouped_positions = frame.groupby(list(group_columns), sort=False, dropna=False).indices
+    for positions in grouped_positions.values():
+        ordered_positions = np.sort(np.asarray(positions, dtype=np.int64))
+        for endpoint in ordered_positions[lookback - 1 :]:
+            split_name = splits[int(endpoint)]
+            if split_name in allowed_splits:
+                indices.append(SequenceIndex(endpoint=int(endpoint), split=split_name))
     return indices
 
 

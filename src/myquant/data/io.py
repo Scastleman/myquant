@@ -9,6 +9,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 DATA_DIR = REPO_ROOT / "data"
 RAW_PRICES_PATH = DATA_DIR / "raw" / "prices.parquet"
 PROCESSED_DATASET_PATH = DATA_DIR / "processed" / "phase1_dataset.parquet"
+PANEL_DATASET_PATH = DATA_DIR / "processed" / "panel_dataset.parquet"
 
 
 def ensure_parent_dir(path: str | Path) -> Path:
