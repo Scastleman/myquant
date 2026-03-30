@@ -1,0 +1,44 @@
+[download]
+start_date = "2006-01-01"
+wikipedia_url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
+batch_size = 75
+max_retries = 3
+retry_sleep_seconds = 1.5
+stock_limit = 505
+
+[dataset]
+min_history_days = 756
+min_breadth_stock_count = 100
+primary_horizon_days = 5
+benchmark_horizon_days = 1
+train_quantiles = [0.3333333333, 0.6666666667]
+vix_thresholds = [0.10, 0.20]
+
+[universe]
+context_tickers = [
+  "SPY",
+  "XLB",
+  "XLE",
+  "XLF",
+  "XLI",
+  "XLK",
+  "XLP",
+  "XLU",
+  "XLV",
+  "XLY",
+  "QQQ",
+  "IWM",
+  "DIA",
+  "MDY",
+  "RSP",
+  "SMH",
+  "TLT",
+  "IEF",
+  "SHY",
+  "LQD",
+  "HYG",
+  "GLD",
+  "DBC",
+  "UUP",
+  "^VIX",
+]

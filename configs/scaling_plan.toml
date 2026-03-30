@@ -1,0 +1,139 @@
+[defaults]
+years = 5.0
+lookback_bars = 256
+stride_bars = 5
+
+[[asset_groups]]
+name = "index_etfs"
+asset_count = 4
+description = "SPY, QQQ, IWM, DIA"
+
+[[asset_groups]]
+name = "sector_etfs"
+asset_count = 11
+description = "S&P sector ETF set."
+
+[[asset_groups]]
+name = "vol_products"
+asset_count = 6
+description = "VIX-related and volatility ETPs."
+
+[[asset_groups]]
+name = "rates_credit_commodities_fx"
+asset_count = 16
+description = "Rates, credit ETFs, commodity proxies, and FX proxies."
+
+[[asset_groups]]
+name = "futures_core"
+asset_count = 12
+description = "Liquid equity, rates, FX, energy, metals, and ag futures."
+
+[[asset_groups]]
+name = "liquid_stocks_100"
+asset_count = 100
+description = "Top liquid U.S. stocks."
+
+[[asset_groups]]
+name = "liquid_stocks_500"
+asset_count = 500
+description = "Broad liquid U.S. stock universe."
+
+[[timeframes]]
+name = "1min"
+bars_per_year = 98280.0
+description = "Regular-session U.S. equity minutes."
+
+[[timeframes]]
+name = "5min"
+bars_per_year = 19656.0
+description = "Regular-session U.S. equity 5-minute bars."
+
+[[timeframes]]
+name = "15min"
+bars_per_year = 6552.0
+description = "Regular-session U.S. equity 15-minute bars."
+
+[[timeframes]]
+name = "1h"
+bars_per_year = 1638.0
+description = "Approximate hourly bars across U.S. regular sessions."
+
+[[timeframes]]
+name = "daily"
+bars_per_year = 252.0
+description = "Trading-day bars."
+
+[[targets]]
+name = "next_return"
+horizon_bars = 1
+description = "Next-bar or next-session return."
+
+[[targets]]
+name = "direction_5"
+horizon_bars = 5
+description = "Direction over the next 5 bars."
+
+[[targets]]
+name = "volatility_20"
+horizon_bars = 20
+description = "Future realized volatility over 20 bars."
+
+[[targets]]
+name = "regime_20"
+horizon_bars = 20
+description = "Risk-on/risk-off or volatility regime label."
+
+[[targets]]
+name = "drawdown_20"
+horizon_bars = 20
+description = "Probability of hitting a drawdown threshold within 20 bars."
+
+[[moving_average_groups]]
+name = "trend_core"
+windows = [9, 21, 50, 100, 200]
+timeframes = ["5min", "15min", "1h", "daily", "weekly", "monthly"]
+description = "Moving-average distance and trend context across multiple clocks."
+
+[[scenarios]]
+name = "daily_panel"
+asset_groups = ["index_etfs", "sector_etfs", "vol_products", "rates_credit_commodities_fx"]
+timeframes = ["daily"]
+targets = ["next_return", "direction_5", "volatility_20", "regime_20", "drawdown_20"]
+moving_average_groups = ["trend_core"]
+years = 20.0
+lookback_bars = 256
+stride_bars = 1
+description = "Current-style daily panel scaled across more asset groups."
+
+[[scenarios]]
+name = "intraday_core_panel"
+asset_groups = ["index_etfs", "sector_etfs", "vol_products", "rates_credit_commodities_fx"]
+timeframes = ["1min", "5min", "15min", "1h", "daily"]
+targets = ["next_return", "direction_5", "volatility_20", "regime_20", "drawdown_20"]
+moving_average_groups = ["trend_core"]
+years = 5.0
+lookback_bars = 256
+stride_bars = 5
+description = "Core ETF and macro panel across intraday plus daily clocks."
+
+[[scenarios]]
+name = "intraday_plus_100_stocks"
+asset_groups = ["index_etfs", "sector_etfs", "vol_products", "rates_credit_commodities_fx", "liquid_stocks_100"]
+timeframes = ["1min", "5min", "15min", "1h", "daily"]
+targets = ["next_return", "direction_5", "volatility_20", "regime_20", "drawdown_20"]
+moving_average_groups = ["trend_core"]
+years = 3.0
+lookback_bars = 256
+stride_bars = 10
+description = "Broader U.S. stock panel with slightly wider stride to control overlap."
+
+[[scenarios]]
+name = "intraday_plus_futures_and_500_stocks"
+asset_groups = ["index_etfs", "sector_etfs", "vol_products", "rates_credit_commodities_fx", "futures_core", "liquid_stocks_500"]
+timeframes = ["1min", "5min", "15min"]
+targets = ["next_return", "direction_5", "volatility_20", "regime_20", "drawdown_20"]
+moving_average_groups = ["trend_core"]
+years = 2.0
+lookback_bars = 256
+stride_bars = 15
+description = "Large multi-asset intraday panel with overlap controlled by a coarser stride."

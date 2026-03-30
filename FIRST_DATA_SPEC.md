@@ -13,7 +13,7 @@ Also create a secondary benchmark target for the next `1` trading day SPY move.
 The model should output:
 
 - the most likely move bucket,
-- the full probability distribution across buckets,
+- the full probability distribution across buckets, normalized to sum to `1`,
 - and a derived signal-strength measure based on calibrated probabilities.
 
 ## Why This Dataset Shape
@@ -390,6 +390,17 @@ Before trusting a transformer, compare against:
 - gradient boosting or XGBoost-style tree model if available
 
 If the transformer cannot beat simple baselines on calibration and directional usefulness, do not trust it.
+
+## Planned Transformer Architecture Notes
+
+When we move from baselines to the sequence model, treat these as architectural requirements:
+
+- use a compact time-series transformer, not a giant generic language-model style stack,
+- include a latent state or regime token that can capture slower regime shifts alongside faster local sequence patterns,
+- let that latent state feed the final prediction head so regime information can influence the output distribution,
+- and make the final head output a probability distribution over the future return buckets rather than a single raw point prediction.
+
+If we later add explicit regime labels, that latent state can also support an auxiliary regime objective, but the primary output should still be the future-move probability distribution.
 
 ## Acceptance Criteria For The Dataset
 

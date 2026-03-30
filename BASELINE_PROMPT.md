@@ -63,6 +63,7 @@ For modeling:
 - Start with strong baselines before trusting a transformer.
 - If I want to move quickly toward transformers, still include at least one minimal sanity-check baseline.
 - The first transformer should be compact and realistic for local training.
+- The transformer architecture should include a compact latent state that helps capture slower regime shifts, not only short-horizon local patterns.
 - Prefer PatchTST or another small time-series transformer only after the data and evaluation pipeline is working.
 
 For target definition in this project:
@@ -152,7 +153,8 @@ If I have not chosen a specific target yet, recommend a first modeling problem l
 - Predict SPY's next 5 trading day move using data known at the close of day t.
 - Also compute a next 1 trading day SPY direction target as a sanity-check benchmark.
 - Prefer coarse probabilistic classification, such as bearish / neutral / bullish or down / flat / up buckets, over precise return regression at the start.
-- Return both the most likely bucket and the calibrated probability distribution across buckets.
+- Use a transformer with an explicit latent state or regime token so the model can track slower market-state changes across the input sequence.
+- Return both the most likely bucket and the calibrated probability distribution across buckets, not a single point estimate.
 - If a single "strength" value is needed for ranking or display, derive it from the calibrated probabilities, such as top-class probability, bullish-minus-bearish probability spread, or probability that return exceeds a threshold.
 - Start with a small, honest feature set and expand only when the baseline pipeline is working.
 - Use the transformer as a second-stage experiment, not the first proof of life.

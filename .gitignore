@@ -21,3 +21,6 @@ data/interim/*
 
 data/processed/*
 !data/processed/.gitkeep
+
+data/lake/*
+!data/lake/.gitkeep

@@ -7,15 +7,28 @@ import pandas as pd
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DATA_DIR = REPO_ROOT / "data"
+LAKE_DIR = DATA_DIR / "lake"
 RAW_PRICES_PATH = DATA_DIR / "raw" / "prices.parquet"
+LARGE_UNIVERSE_MEMBERSHIP_PATH = DATA_DIR / "raw" / "large_universe_membership.parquet"
+LARGE_UNIVERSE_RAW_PRICES_PATH = DATA_DIR / "raw" / "large_universe_prices.parquet"
 PROCESSED_DATASET_PATH = DATA_DIR / "processed" / "phase1_dataset.parquet"
 PANEL_DATASET_PATH = DATA_DIR / "processed" / "panel_dataset.parquet"
+LARGE_UNIVERSE_PANEL_DATASET_PATH = DATA_DIR / "processed" / "large_universe_panel_dataset.parquet"
+SPY_BREADTH_DATASET_PATH = DATA_DIR / "processed" / "spy_breadth_dataset.parquet"
+INTRADAY_BAR_STORE_ROOT = LAKE_DIR / "bars"
 
 
 def ensure_parent_dir(path: str | Path) -> Path:
     """Create the parent directory for a file path if it does not already exist."""
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
+    return target
+
+
+def ensure_dir(path: str | Path) -> Path:
+    """Create a directory if it does not already exist."""
+    target = Path(path)
+    target.mkdir(parents=True, exist_ok=True)
     return target
 
 

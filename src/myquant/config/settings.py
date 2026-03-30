@@ -28,6 +28,13 @@ class DataSection:
 
 
 @dataclass(frozen=True)
+class StorageSection:
+    intraday_root: str
+    default_input_timezone: str
+    partition_timezone: str
+
+
+@dataclass(frozen=True)
 class TargetSection:
     primary_horizon_days: int
     benchmark_horizon_days: int
@@ -63,6 +70,7 @@ class UniverseSection:
 class ProjectConfig:
     project: ProjectSection
     data: DataSection
+    storage: StorageSection
     targets: TargetSection
     events: EventSection
     evaluation: EvaluationSection
@@ -98,6 +106,7 @@ def _build_config(raw_config: dict[str, Any]) -> ProjectConfig:
     return ProjectConfig(
         project=ProjectSection(**raw_config["project"]),
         data=DataSection(**raw_config["data"]),
+        storage=StorageSection(**raw_config["storage"]),
         targets=TargetSection(
             primary_horizon_days=raw_config["targets"]["primary_horizon_days"],
             benchmark_horizon_days=raw_config["targets"]["benchmark_horizon_days"],

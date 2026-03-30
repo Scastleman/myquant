@@ -54,6 +54,22 @@ def apply_standardization(
     return normalized
 
 
+def standardize_feature_matrix(
+    frame: pd.DataFrame,
+    feature_columns: list[str],
+    means: pd.Series,
+    stds: pd.Series,
+) -> np.ndarray:
+    """Materialize a contiguous float32 feature matrix using train-fitted normalization."""
+    standardized = (
+        frame.loc[:, feature_columns]
+        .astype(np.float32)
+        .sub(means.astype(np.float32), axis=1)
+        .div(stds.astype(np.float32), axis=1)
+    )
+    return np.ascontiguousarray(standardized.to_numpy(dtype=np.float32))
+
+
 def build_label_mapping(labels: list[str]) -> tuple[dict[str, int], dict[int, str]]:
     forward = {label: idx for idx, label in enumerate(labels)}
     reverse = {idx: label for label, idx in forward.items()}
@@ -119,3 +135,58 @@ class RollingWindowDataset(Dataset):
         x = self.features[start : endpoint + 1]
         y = self.labels[endpoint]
         return torch.from_numpy(x), torch.tensor(y, dtype=torch.long)
+
+
+class MultiTaskRollingWindowDataset(Dataset):
+    """Rolling window dataset that returns one label per configured task."""
+
+    def __init__(
+        self,
+        frame: pd.DataFrame | None,
+        feature_columns: list[str] | None,
+        task_target_columns: dict[str, str] | None,
+        task_label_to_index: dict[str, dict[str, int]] | None,
+        sequence_indices: list[SequenceIndex],
+        lookback: int,
+        *,
+        feature_matrix: np.ndarray | None = None,
+        label_arrays: dict[str, np.ndarray] | None = None,
+    ) -> None:
+        if feature_matrix is None:
+            if frame is None or feature_columns is None:
+                raise ValueError("frame and feature_columns are required when feature_matrix is omitted")
+            self.feature_columns = feature_columns
+            self.features = np.ascontiguousarray(frame.loc[:, feature_columns].to_numpy(dtype=np.float32))
+        else:
+            self.feature_columns = feature_columns or []
+            self.features = np.ascontiguousarray(feature_matrix.astype(np.float32, copy=False))
+
+        if label_arrays is None:
+            if frame is None or task_target_columns is None or task_label_to_index is None:
+                raise ValueError("frame, task_target_columns, and task_label_to_index are required when label_arrays is omitted")
+            self.labels = {
+                task_name: frame[target_column].map(label_to_index).to_numpy(dtype=np.int64)
+                for task_name, target_column in task_target_columns.items()
+                for label_to_index in [task_label_to_index[task_name]]
+            }
+        else:
+            self.labels = {
+                task_name: np.asarray(values, dtype=np.int64)
+                for task_name, values in label_arrays.items()
+            }
+        self.sequence_indices = sequence_indices
+        self.lookback = lookback
+
+    def __len__(self) -> int:
+        return len(self.sequence_indices)
+
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        sequence_index = self.sequence_indices[idx]
+        endpoint = sequence_index.endpoint
+        start = endpoint - self.lookback + 1
+        x = self.features[start : endpoint + 1]
+        targets = {
+            task_name: torch.tensor(label_values[endpoint], dtype=torch.long)
+            for task_name, label_values in self.labels.items()
+        }
+        return torch.from_numpy(x), targets

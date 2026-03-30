@@ -10,6 +10,8 @@ Learning-first SPY quant research project with an eventual transformer track.
 - Primary target: SPY adjusted-close move from `t` to `t+5`
 - Secondary benchmark: SPY adjusted-close move from `t` to `t+1`
 - Labeling: `down / flat / up` from train-set quantiles
+- Model output: probability distribution over future move buckets
+- Transformer note: include a latent state or regime token to capture slower market-state shifts
 - Event regimes: VIX absolute daily moves of `10%` and `20%`
 
 ## Project Docs
@@ -17,6 +19,8 @@ Learning-first SPY quant research project with an eventual transformer track.
 - [BASELINE_PROMPT.md](./BASELINE_PROMPT.md)
 - [FIRST_DATA_SPEC.md](./FIRST_DATA_SPEC.md)
 - [PREBUILD_CHECKLIST.md](./PREBUILD_CHECKLIST.md)
+- [SCALING_PLAN.md](./SCALING_PLAN.md)
+- [INTRADAY_STORAGE.md](./INTRADAY_STORAGE.md)
 
 ## First Build Goal
 
@@ -72,6 +76,15 @@ Build the larger grouped multi-target panel dataset using:
 python -m myquant.data.panel_dataset
 ```
 
+Build the large current-500 daily universe and derived SPY-breadth datasets using:
+
+```powershell
+python -m myquant.data.large_universe_download
+python -m myquant.data.large_universe_dataset
+```
+
+This large daily panel uses the current S&P 500 membership snapshot plus the ETF/macro context set, overlapping windows with `stride=1`, stock-relative-to-SPY features, and cross-sectional breadth features. It is useful for broad pretraining and breadth research, but it remains survivorship-biased because it does not reconstruct historical index membership.
+
 Train the first baseline suite using:
 
 ```powershell
@@ -94,4 +107,22 @@ For the grouped panel problem, point training at the panel parquet:
 
 ```powershell
 python -m myquant.training.run_transformer --dataset-path data\processed\panel_dataset.parquet --device cuda --epochs 30 --batch-size 512 --lookback 60 --d-model 256 --num-layers 4 --n-heads 8 --patch-length 10 --patch-stride 5 --num-workers 2 --log-every-steps 25
+```
+
+For the large daily stock panel, use the multitask setup with an auxiliary excess-return head. On Windows, prefer `--num-workers 0` for this larger dataset to avoid duplicating the full feature matrix across loader workers:
+
+```powershell
+python -m myquant.training.run_transformer --dataset-path data\processed\large_universe_panel_dataset.parquet --device cuda --primary-target-column target_label_5d --aux-target-columns target_excess_label_5d --aux-loss-weight 0.35 --epochs 10 --batch-size 1024 --lookback 60 --d-model 128 --num-layers 3 --n-heads 4 --patch-length 10 --patch-stride 5 --num-workers 0 --log-every-steps 50
+```
+
+Estimate sequence counts for larger multi-asset and intraday scenarios using:
+
+```powershell
+python -m myquant.planning.sequence_budget
+```
+
+Inspect the intraday bar lake using:
+
+```powershell
+python -m myquant.storage.bar_store --summary
 ```

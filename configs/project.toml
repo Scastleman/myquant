@@ -9,6 +9,11 @@ provider = "yfinance"
 storage_format = "parquet"
 price_field = "adj_close"
 
+[storage]
+intraday_root = "data/lake/bars"
+default_input_timezone = "America/New_York"
+partition_timezone = "America/New_York"
+
 [targets]
 primary_horizon_days = 5
 benchmark_horizon_days = 1
