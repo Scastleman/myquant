@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -9,6 +10,31 @@ from torch.utils.data import Dataset
 
 
 TARGET_COLUMN = "target_label_5d"
+
+
+def _as_cpu_tensor(
+    values: np.ndarray | torch.Tensor,
+    *,
+    dtype: torch.dtype,
+    share_memory: bool,
+) -> torch.Tensor:
+    if isinstance(values, torch.Tensor):
+        tensor = values.detach()
+        if tensor.device.type != "cpu":
+            tensor = tensor.cpu()
+        if tensor.dtype != dtype:
+            tensor = tensor.to(dtype=dtype)
+        if not tensor.is_contiguous():
+            tensor = tensor.contiguous()
+    else:
+        array = np.asarray(values, order="C")
+        if not array.flags["C_CONTIGUOUS"] or not array.flags["WRITEABLE"]:
+            array = np.array(array, copy=True, order="C")
+        tensor = torch.as_tensor(array, dtype=dtype)
+    if share_memory:
+        tensor = tensor.contiguous()
+        tensor.share_memory_()
+    return tensor
 
 
 def get_feature_columns(frame: pd.DataFrame) -> list[str]:
@@ -87,12 +113,16 @@ def build_sequence_indices(
     lookback: int,
     allowed_splits: tuple[str, ...],
     group_columns: tuple[str, ...] | None = None,
+    window_stride: int = 1,
 ) -> list[SequenceIndex]:
     """Create endpoint indices for rolling windows, preserving historical context."""
+    if window_stride < 1:
+        raise ValueError("window_stride must be at least 1")
+
     indices: list[SequenceIndex] = []
     splits = frame["split"].tolist()
     if not group_columns:
-        for endpoint in range(lookback - 1, len(frame)):
+        for endpoint in range(lookback - 1, len(frame), window_stride):
             split_name = splits[endpoint]
             if split_name in allowed_splits:
                 indices.append(SequenceIndex(endpoint=endpoint, split=split_name))
@@ -101,7 +131,7 @@ def build_sequence_indices(
     grouped_positions = frame.groupby(list(group_columns), sort=False, dropna=False).indices
     for positions in grouped_positions.values():
         ordered_positions = np.sort(np.asarray(positions, dtype=np.int64))
-        for endpoint in ordered_positions[lookback - 1 :]:
+        for endpoint in ordered_positions[lookback - 1 :: window_stride]:
             split_name = splits[int(endpoint)]
             if split_name in allowed_splits:
                 indices.append(SequenceIndex(endpoint=int(endpoint), split=split_name))
@@ -118,10 +148,20 @@ class RollingWindowDataset(Dataset):
         label_to_index: dict[str, int],
         sequence_indices: list[SequenceIndex],
         lookback: int,
+        *,
+        share_memory: bool = False,
     ) -> None:
         self.feature_columns = feature_columns
-        self.features = np.ascontiguousarray(frame.loc[:, feature_columns].to_numpy(dtype=np.float32))
-        self.labels = frame[TARGET_COLUMN].map(label_to_index).to_numpy(dtype=np.int64)
+        self.features = _as_cpu_tensor(
+            frame.loc[:, feature_columns].to_numpy(dtype=np.float32),
+            dtype=torch.float32,
+            share_memory=share_memory,
+        )
+        self.labels = _as_cpu_tensor(
+            frame[TARGET_COLUMN].map(label_to_index).to_numpy(dtype=np.int64),
+            dtype=torch.long,
+            share_memory=share_memory,
+        )
         self.sequence_indices = sequence_indices
         self.lookback = lookback
 
@@ -134,7 +174,7 @@ class RollingWindowDataset(Dataset):
         start = endpoint - self.lookback + 1
         x = self.features[start : endpoint + 1]
         y = self.labels[endpoint]
-        return torch.from_numpy(x), torch.tensor(y, dtype=torch.long)
+        return x, y
 
 
 class MultiTaskRollingWindowDataset(Dataset):
@@ -149,33 +189,86 @@ class MultiTaskRollingWindowDataset(Dataset):
         sequence_indices: list[SequenceIndex],
         lookback: int,
         *,
-        feature_matrix: np.ndarray | None = None,
-        label_arrays: dict[str, np.ndarray] | None = None,
+        feature_matrix: np.ndarray | torch.Tensor | None = None,
+        label_arrays: dict[str, np.ndarray | torch.Tensor] | None = None,
+        feature_matrix_path: str | Path | None = None,
+        label_array_paths: dict[str, str | Path] | None = None,
+        share_memory: bool = False,
     ) -> None:
-        if feature_matrix is None:
+        self._feature_memmap_path = str(feature_matrix_path) if feature_matrix_path is not None else None
+        self._feature_memmap: np.memmap | None = None
+        self._label_memmap_paths = {
+            task_name: str(path)
+            for task_name, path in (label_array_paths or {}).items()
+        }
+        self._label_memmaps: dict[str, np.memmap] = {}
+
+        if self._feature_memmap_path is not None:
+            self.feature_columns = feature_columns or []
+            self.features: torch.Tensor | None = None
+        elif feature_matrix is None:
             if frame is None or feature_columns is None:
                 raise ValueError("frame and feature_columns are required when feature_matrix is omitted")
             self.feature_columns = feature_columns
-            self.features = np.ascontiguousarray(frame.loc[:, feature_columns].to_numpy(dtype=np.float32))
+            self.features = _as_cpu_tensor(
+                frame.loc[:, feature_columns].to_numpy(dtype=np.float32),
+                dtype=torch.float32,
+                share_memory=share_memory,
+            )
         else:
             self.feature_columns = feature_columns or []
-            self.features = np.ascontiguousarray(feature_matrix.astype(np.float32, copy=False))
+            self.features = _as_cpu_tensor(
+                feature_matrix,
+                dtype=torch.float32,
+                share_memory=share_memory,
+            )
 
-        if label_arrays is None:
+        if self._label_memmap_paths:
+            self.labels: dict[str, torch.Tensor] = {}
+            self.task_names = tuple(self._label_memmap_paths)
+        elif label_arrays is None:
             if frame is None or task_target_columns is None or task_label_to_index is None:
                 raise ValueError("frame, task_target_columns, and task_label_to_index are required when label_arrays is omitted")
             self.labels = {
-                task_name: frame[target_column].map(label_to_index).to_numpy(dtype=np.int64)
+                task_name: _as_cpu_tensor(
+                    frame[target_column].map(label_to_index).to_numpy(dtype=np.int64),
+                    dtype=torch.long,
+                    share_memory=share_memory,
+                )
                 for task_name, target_column in task_target_columns.items()
                 for label_to_index in [task_label_to_index[task_name]]
             }
+            self.task_names = tuple(self.labels)
         else:
             self.labels = {
-                task_name: np.asarray(values, dtype=np.int64)
+                task_name: _as_cpu_tensor(
+                    values,
+                    dtype=torch.long,
+                    share_memory=share_memory,
+                )
                 for task_name, values in label_arrays.items()
             }
+            self.task_names = tuple(self.labels)
         self.sequence_indices = sequence_indices
         self.lookback = lookback
+
+    def _feature_source(self) -> torch.Tensor | np.memmap:
+        if self.features is not None:
+            return self.features
+        if self._feature_memmap is None:
+            if self._feature_memmap_path is None:
+                raise RuntimeError("Feature memmap path is not configured.")
+            self._feature_memmap = np.load(self._feature_memmap_path, mmap_mode="r")
+        return self._feature_memmap
+
+    def _label_source(self, task_name: str) -> torch.Tensor | np.memmap:
+        if task_name in self.labels:
+            return self.labels[task_name]
+        if task_name not in self._label_memmaps:
+            if task_name not in self._label_memmap_paths:
+                raise RuntimeError(f"Missing memmap path for task {task_name}.")
+            self._label_memmaps[task_name] = np.load(self._label_memmap_paths[task_name], mmap_mode="r")
+        return self._label_memmaps[task_name]
 
     def __len__(self) -> int:
         return len(self.sequence_indices)
@@ -184,9 +277,20 @@ class MultiTaskRollingWindowDataset(Dataset):
         sequence_index = self.sequence_indices[idx]
         endpoint = sequence_index.endpoint
         start = endpoint - self.lookback + 1
-        x = self.features[start : endpoint + 1]
+        features = self._feature_source()
+        if isinstance(features, torch.Tensor):
+            x = features[start : endpoint + 1]
+        else:
+            x = torch.as_tensor(
+                np.array(features[start : endpoint + 1], copy=True, order="C"),
+                dtype=torch.float32,
+            )
         targets = {
-            task_name: torch.tensor(label_values[endpoint], dtype=torch.long)
-            for task_name, label_values in self.labels.items()
+            task_name: (
+                label_values[endpoint]
+                if isinstance(label_values := self._label_source(task_name), torch.Tensor)
+                else torch.tensor(int(label_values[endpoint]), dtype=torch.long)
+            )
+            for task_name in self.task_names
         }
-        return torch.from_numpy(x), targets
+        return x, targets

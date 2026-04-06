@@ -46,6 +46,88 @@ class PositionalEncoding(nn.Module):
         return x + self.pe[:, : x.size(1)]
 
 
+class RevIN(nn.Module):
+    """Lightweight reversible instance normalization for per-window stabilization."""
+
+    def __init__(
+        self,
+        num_features: int,
+        *,
+        eps: float = 1e-5,
+        affine: bool = True,
+    ) -> None:
+        super().__init__()
+        self.eps = eps
+        self.affine = affine
+        if affine:
+            self.weight = nn.Parameter(torch.ones(num_features))
+            self.bias = nn.Parameter(torch.zeros(num_features))
+        else:
+            self.register_parameter("weight", None)
+            self.register_parameter("bias", None)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        mean = x.mean(dim=1, keepdim=True)
+        variance = x.var(dim=1, unbiased=False, keepdim=True)
+        normalized = (x - mean) / torch.sqrt(variance + self.eps)
+        if self.affine:
+            normalized = (
+                normalized * self.weight.view(1, 1, -1)
+                + self.bias.view(1, 1, -1)
+            )
+        return normalized
+
+
+class PatchTransformerBlock(nn.Module):
+    """Transformer encoder block with explicit pre/post-norm and attention dropout."""
+
+    def __init__(
+        self,
+        *,
+        d_model: int,
+        n_heads: int,
+        ff_dim: int,
+        dropout: float,
+        attention_dropout: float,
+        norm_first: bool,
+    ) -> None:
+        super().__init__()
+        self.norm_first = norm_first
+        self.attn_norm = nn.LayerNorm(d_model)
+        self.ff_norm = nn.LayerNorm(d_model)
+        self.self_attn = nn.MultiheadAttention(
+            embed_dim=d_model,
+            num_heads=n_heads,
+            dropout=attention_dropout,
+            batch_first=True,
+        )
+        self.attn_dropout = nn.Dropout(dropout)
+        self.ff = nn.Sequential(
+            nn.Linear(d_model, ff_dim),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(ff_dim, d_model),
+        )
+        self.ff_dropout = nn.Dropout(dropout)
+
+    def _attention(self, x: torch.Tensor) -> torch.Tensor:
+        attended, _ = self.self_attn(x, x, x, need_weights=False)
+        return self.attn_dropout(attended)
+
+    def _feed_forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.ff_dropout(self.ff(x))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self.norm_first:
+            x = x + self._attention(self.attn_norm(x))
+            x = x + self._feed_forward(self.ff_norm(x))
+            return x
+
+        x = self.attn_norm(x + self._attention(x))
+        x = self.ff_norm(x + self._feed_forward(x))
+        return x
+
+
 class PatchTransformerClassifier(nn.Module):
     """
     Compact patch-based transformer classifier for rolling market-feature sequences.
@@ -66,7 +148,12 @@ class PatchTransformerClassifier(nn.Module):
         num_layers: int = 3,
         regime_dim: int = 32,
         dropout: float = 0.1,
+        attention_dropout: float = 0.0,
+        ff_dim: int | None = None,
         ff_multiplier: int = 4,
+        norm_first: bool = True,
+        use_revin: bool = False,
+        revin_affine: bool = True,
         *,
         task_output_dims: dict[str, int] | None = None,
         primary_task_name: str = "primary",
@@ -85,8 +172,12 @@ class PatchTransformerClassifier(nn.Module):
             raise ValueError("primary_task_name must exist in task_output_dims")
         if any(output_dim < 2 for output_dim in task_output_dims.values()):
             raise ValueError("each task output dimension must be at least 2")
+        feedforward_dim = ff_dim if ff_dim is not None else d_model * ff_multiplier
+        if feedforward_dim < 1:
+            raise ValueError("ff_dim must be at least 1")
 
         self.primary_task_name = primary_task_name
+        self.revin = RevIN(feature_dim, affine=revin_affine) if use_revin else None
 
         self.patch_embed = nn.Conv1d(
             in_channels=feature_dim,
@@ -98,15 +189,19 @@ class PatchTransformerClassifier(nn.Module):
         self.cls_token = nn.Parameter(torch.zeros(1, 1, d_model))
         self.regime_token = nn.Parameter(torch.zeros(1, 1, d_model))
         self.positional_encoding = PositionalEncoding(d_model=d_model, max_len=num_patches + 2)
-        encoder_layer = nn.TransformerEncoderLayer(
-            d_model=d_model,
-            nhead=n_heads,
-            dim_feedforward=d_model * ff_multiplier,
-            dropout=dropout,
-            activation="gelu",
-            batch_first=True,
+        self.encoder = nn.ModuleList(
+            [
+                PatchTransformerBlock(
+                    d_model=d_model,
+                    n_heads=n_heads,
+                    ff_dim=feedforward_dim,
+                    dropout=dropout,
+                    attention_dropout=attention_dropout,
+                    norm_first=norm_first,
+                )
+                for _ in range(num_layers)
+            ]
         )
-        self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
         self.norm = nn.LayerNorm(d_model)
         self.regime_projection = nn.Sequential(
             nn.Linear(d_model, regime_dim),
@@ -128,13 +223,17 @@ class PatchTransformerClassifier(nn.Module):
         nn.init.normal_(self.regime_token, mean=0.0, std=0.02)
 
     def forward(self, x: torch.Tensor) -> PatchTransformerOutput:
+        if self.revin is not None:
+            x = self.revin(x)
         x = x.transpose(1, 2)
         tokens = self.patch_embed(x).transpose(1, 2)
         cls = self.cls_token.expand(tokens.size(0), -1, -1)
         regime = self.regime_token.expand(tokens.size(0), -1, -1)
         tokens = torch.cat([cls, regime, tokens], dim=1)
         tokens = self.positional_encoding(tokens)
-        encoded = self.encoder(tokens)
+        encoded = tokens
+        for block in self.encoder:
+            encoded = block(encoded)
         cls_state = self.norm(encoded[:, 0])
         regime_context = self.norm(encoded[:, 1])
         regime_state = self.regime_projection(regime_context)
